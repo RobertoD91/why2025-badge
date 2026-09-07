@@ -112,7 +112,12 @@ gli oggetti `tasmota.wire1` / `tasmota.wire2` (bus 1 = i pin `I2C SCL/SDA` del t
 con `tasmota.add_cmd(nome, funzione)`. Gli script vanno nel filesystem (LittleFS) e si caricano
 da `autoexec.be`.
 
-### Backlight e connettori RGB* via AW9523B
+### Backlight e connettori di espansione RGB* via AW9523B
+
+**Questa sezione riguarda la retroilluminazione e i connettori di espansione `RGB0..RGB3`.**
+I **7 LED RGB frontali** sono una catena **WS2812B** pilotata direttamente da **GPIO5**:
+si configurano con il componente `WS2812` e `Pixels 7`, senza passare dall'AW9523B.
+Le scritture nei registri dell'expander descritte qui non regolano i LED frontali.
 
 Registri rilevanti dell'AW9523B (stessi valori scritti da `led_init()` in `led.c`):
 
@@ -303,6 +308,56 @@ il TSC2007 (`0x48` tipico).
 ```berry
 load("aw9523_backlight.be")
 ```
+
+### Fascia dello schermo non aggiornata
+
+Una fascia che conserva la vecchia immagine può dipendere dall'area ridisegnata oppure da
+dimensioni/offset non adatti al pannello. Il sintomo da solo non identifica la causa.
+
+1. Dalla console Tasmota leggere la configurazione e provare un riempimento completo:
+
+   ```text
+   Display
+   Backlog DisplayMode 0; DisplayText [B63488z]
+   ```
+
+   `B63488` imposta lo sfondo rosso e `z` riempie l'intera area logica del display
+   ([comandi DisplayText](https://tasmota.github.io/docs/Displays/#displaytext)).
+   Se anche la fascia diventa rossa, quell'area è raggiungibile: verificare la logica che
+   disegna le pagine, cancellando con `[z]` prima di una nuova schermata quando serve.
+
+2. Se la fascia resta, controllare il `display.ini` effettivamente caricato nel filesystem.
+   L'[esempio ST7789 di Tasmota v15.6.0](https://github.com/arendst/Tasmota/blob/v15.6.0/tasmota/displaydesc/ST7789_display.ini)
+   è per **240×240** e contiene offset `50` esadecimali (**80 pixel**) per alcune rotazioni.
+   Per il pannello **240×320** del badge usare il descrittore completo riportato sopra:
+   in particolare, la riga `:H` e le righe delle rotazioni devono essere:
+
+   ```ini
+   :H,ST7789,240,320,16,SPI,1,*,*,*,*,*,*,*,40
+   :0,C0,00,00,00
+   :1,60,00,00,01
+   :2,00,00,00,02
+   :3,A0,00,00,03
+   ```
+
+   Queste sono righe da controllare nel descrittore completo, non un `display.ini` completo.
+   Se è presente una riga `:r,...`, rimuoverla per lasciare la rotazione al comando
+   `DisplayRotate` (nel descrittore di questa guida non è presente).
+
+3. Dopo aver salvato e caricato il descrittore, eseguire:
+
+   ```text
+   Backlog DisplayRotate 0; Restart 1
+   ```
+
+   Dopo il riavvio, `Display` dovrebbe riportare `Model:17`, `Width:240`, `Height:320`,
+   `Rotate:0`. Ripetere il riempimento rosso. Con uDisplay le dimensioni vengono ricavate
+   dal descrittore: modificare soltanto `DisplayWidth`/`DisplayHeight` non corregge il file.
+
+Per tornare allo sfondo nero, eseguire `DisplayText [B0z]`. Se la fascia persiste anche con
+questa configurazione, raccogliere l'output di `Display` e `Status 2`, il `display.ini`
+caricato e una foto del difetto prima di cambiare altri parametri. Questa procedura è
+diagnostica e non costituisce una correzione già verificata sul badge.
 
 ### Build custom (necessaria per il display)
 
