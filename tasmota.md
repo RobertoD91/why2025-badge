@@ -8,6 +8,10 @@ PCB. Le informazioni sui GPIO e sui registri sono estratte dal firmware ufficial
 comportamento di Tasmota dalla documentazione ufficiale (pagine *Components*, *Displays*,
 *Universal Display Driver*, *Berry*, *BUILDS*) e dai binari pubblicati su `ota.tasmota.com`.
 
+**Stato della verifica:** configurazione proposta, confrontata con i sorgenti del badge e di
+[Tasmota v15.6.0](https://github.com/arendst/Tasmota/tree/v15.6.0). La build custom non è stata
+compilata e la configurazione e gli script non sono stati provati sul badge.
+
 > **Attenzione concettuale**: questa è una board custom da conferenza (MCU ESP32-C3 + display +
 > LED + I2C expander), non un dispositivo "smart plug/switch" tipico di Tasmota. Flashare Tasmota
 > **sostituisce interamente** il firmware ufficiale: radar BLE, giochi (Snake, Space Invaders),
@@ -28,8 +32,8 @@ comportamento di Tasmota dalla documentazione ufficiale (pagine *Components*, *D
 | 5 | **WS2812** data-in | interno (7 LED frontali) | il DOUT dell'ultimo LED esce sul pin 4 ("1W") del connettore "I2C" |
 | 6 | SPI **CLK** | "SPI" pin 5 | ST7789, SPI hardware |
 | 7 | SPI **MOSI** | "SPI" pin 2 | ST7789 |
-| 8 | **Button1** = DOWN (rotella destra / pressione centrale destra) | "RS232" pin 4 o 5 | `ui.h`: `BUTTON_1 0x08 // DOWN`; attivo basso, pull-up interno. Il README chiama i due segnali "button A/B" ma non dice quale sia quale |
-| 9 | **Button2** = UP (rotella sinistra / pressione centrale sinistra) | "RS232" pin 4 o 5 | `ui.h`: `BUTTON_2 0x09 // UP`. ⚠️ **strapping boot-mode** ESP32-C3: tenuto premuto al reset → Joint Download Boot (è la procedura di recovery del README) |
+| 8 | **Button1** = DOWN (rotella destra / pressione centrale destra) | "RS232" pin 4 o 5 | `ui.h`: `BUTTON_1 0x08 // DOWN`; attivo basso, pull-up interno. **Strapping**: per entrare in download deve restare alto (pulsante rilasciato). Il README chiama i due segnali "button A/B" ma non dice quale sia quale |
+| 9 | **Button2** = UP (rotella sinistra / pressione centrale sinistra) | "RS232" pin 4 o 5 | `ui.h`: `BUTTON_2 0x09 // UP`. ⚠️ **strapping boot-mode** ESP32-C3: tenuto premuto al reset, con GPIO8 alto → Joint Download Boot (è la procedura di recovery del README) |
 | 10 | SPI **CS** display | "SPI" pin 3 | `CONFIG_LV_DISP_SPI_CS=10` |
 | 11–17 | non disponibili | — | riservati alla flash SPI integrata nel modulo |
 | 18/19 | USB D-/D+ | USB-C | USB-Serial/JTAG nativo (README) — non usabili come GPIO applicativi |
@@ -61,9 +65,11 @@ Connettori fisici (8): `SPI`, `I2C`, `RGB0`, `RGB1`, `RGB2`, `RGB3`, `RS232`, `P
   build personalizzata** (vedi *Build custom* più sotto).
 - Con il binario stock funzionano comunque: Wi-Fi/MQTT/web UI, i **7 WS2812**, i **due pulsanti**,
   il bus **I2C** (`I2CScan`) e **Berry** (quindi anche backlight/AW9523 via script).
-- Tasmota sta dismettendo i driver display specifici (fra cui l'ST7789 legacy, `DisplayModel 12`)
-  in favore dello **Universal Display Driver** (`DisplayModel 17`, descrittore `display.ini`).
-  La configurazione sotto usa quello.
+- In **Tasmota v15.6.0 il driver ST7789 legacy (`DisplayModel 12`) è già stato rimosso**:
+  definire `USE_DISPLAY_ST7789` non lo abilita. Il
+  [sorgente della versione](https://github.com/arendst/Tasmota/blob/v15.6.0/tasmota/include/tasmota_configurations.h#L383)
+  lo indica come `REMOVED`. La configurazione sotto usa lo **Universal Display Driver**
+  (`DisplayModel 17`, descrittore `display.ini`).
 - Console: nelle release attuali `tasmota32c3.bin` usa la **console USB (HWCDC)** sul
   connettore USB-C con fallback su UART0 (GPIO20/21, connettore "RS232") quando l'USB non è
   collegato; la vecchia variante separata `tasmota32c3cdc` non è più pubblicata.
@@ -106,7 +112,12 @@ gli oggetti `tasmota.wire1` / `tasmota.wire2` (bus 1 = i pin `I2C SCL/SDA` del t
 con `tasmota.add_cmd(nome, funzione)`. Gli script vanno nel filesystem (LittleFS) e si caricano
 da `autoexec.be`.
 
-### Backlight e connettori RGB* via AW9523B
+### Backlight e connettori di espansione RGB* via AW9523B
+
+**Questa sezione riguarda la retroilluminazione e i connettori di espansione `RGB0..RGB3`.**
+I **7 LED RGB frontali** sono una catena **WS2812B** pilotata direttamente da **GPIO5**:
+si configurano con il componente `WS2812` e `Pixels 7`, senza passare dall'AW9523B.
+Le scritture nei registri dell'expander descritte qui non regolano i LED frontali.
 
 Registri rilevanti dell'AW9523B (stessi valori scritti da `led_init()` in `led.c`):
 
@@ -155,9 +166,27 @@ tasmota.add_cmd('AwBacklight', def (cmd, idx, payload)
 end)
 ```
 
-Per i connettori `RGB*` basta scrivere gli altri registri DIM (`0x24..0x2F`) con la stessa
-`wire.write`; se servono come GPIO invece che come LED, impostare a 1 il bit corrispondente in
-`0x12`/`0x13` e usare i registri `0x02`/`0x03` (output) e `0x04`/`0x05` (direzione).
+Per i connettori `RGB*` si usano i registri DIM `0x24..0x2F`, ma **solo i pin configurati in
+modalità LED rispondono alla regolazione DIM**. I valori `0x80` dello script sono sufficienti
+per la backlight e riproducono `led_init()`, ma lasciano due canali dei connettori in modalità
+GPIO (mappa dei connettori nel [README](README.md#devices-on-board)):
+
+| Pin AW9523B | Connettore | Registro DIM | Registro di modalità |
+|---|---|---|---|
+| `P0_7` | `RGB2`, pin 3 | `0x2B` | `0x12`, bit 7 |
+| `P1_7` | `RGB3`, pin 4 | `0x2F` | `0x13`, bit 7 |
+
+Se si vogliono usare **tutti i 16 pin come uscite LED** (4 per la backlight e 12 per i
+connettori), sostituire le due scritture su `0x12`/`0x13` nel metodo `init()` con:
+
+```berry
+self.wire.write(addr, 0x12, 0x00, 1)     # tutti i pin P0 in modalità LED
+self.wire.write(addr, 0x13, 0x00, 1)     # tutti i pin P1 in modalità LED
+```
+
+Se alcuni pin servono come GPIO, mantenere a 1 i rispettivi bit in `0x12`/`0x13` e usare i
+registri `0x02`/`0x03` (output) e `0x04`/`0x05` (direzione). Per la sola backlight si possono
+mantenere i valori `0x80` dello script originale.
 
 ### Touch TSC2007
 
@@ -181,7 +210,7 @@ end
 Codici componente **Tasmota32/ESP32** (pagina *Components*, tabella ESP32 — quelli della tabella
 ESP8266 sono diversi per i componenti display): `I2C SCL1=608`, `I2C SDA1=640`, `SPI MISO1=672`,
 `SPI MOSI1=704`, `SPI CLK1=736`, `SPI CS1=768`, `SPI DC1=800`, `Display Rst=1024`, `WS2812=1376`,
-`Button1=32`, `Button2=33`, `Option A3=6210` (legacy: `ST7789 CS=6592`, `ST7789 DC=6624`).
+`Button1=32`, `Button2=33`, `Option A3=6210`.
 
 Per ESP32-C3 l'array `GPIO` del template ha **22 elementi**, indice = numero GPIO (0…21);
 gli indici 11–17 (flash) restano a 0 (stesso schema del template ufficiale "SuperMini ESP32-C3").
@@ -280,9 +309,60 @@ il TSC2007 (`0x48` tipico).
 load("aw9523_backlight.be")
 ```
 
+### Fascia dello schermo non aggiornata
+
+Una fascia che conserva la vecchia immagine può dipendere dall'area ridisegnata oppure da
+dimensioni/offset non adatti al pannello. Il sintomo da solo non identifica la causa.
+
+1. Dalla console Tasmota leggere la configurazione e provare un riempimento completo:
+
+   ```text
+   Display
+   Backlog DisplayMode 0; DisplayText [B63488z]
+   ```
+
+   `B63488` imposta lo sfondo rosso e `z` riempie l'intera area logica del display
+   ([comandi DisplayText](https://tasmota.github.io/docs/Displays/#displaytext)).
+   Se anche la fascia diventa rossa, quell'area è raggiungibile: verificare la logica che
+   disegna le pagine, cancellando con `[z]` prima di una nuova schermata quando serve.
+
+2. Se la fascia resta, controllare il `display.ini` effettivamente caricato nel filesystem.
+   L'[esempio ST7789 di Tasmota v15.6.0](https://github.com/arendst/Tasmota/blob/v15.6.0/tasmota/displaydesc/ST7789_display.ini)
+   è per **240×240** e contiene offset `50` esadecimali (**80 pixel**) per alcune rotazioni.
+   Per il pannello **240×320** del badge usare il descrittore completo riportato sopra:
+   in particolare, la riga `:H` e le righe delle rotazioni devono essere:
+
+   ```ini
+   :H,ST7789,240,320,16,SPI,1,*,*,*,*,*,*,*,40
+   :0,C0,00,00,00
+   :1,60,00,00,01
+   :2,00,00,00,02
+   :3,A0,00,00,03
+   ```
+
+   Queste sono righe da controllare nel descrittore completo, non un `display.ini` completo.
+   Se è presente una riga `:r,...`, rimuoverla per lasciare la rotazione al comando
+   `DisplayRotate` (nel descrittore di questa guida non è presente).
+
+3. Dopo aver salvato e caricato il descrittore, eseguire:
+
+   ```text
+   Backlog DisplayRotate 0; Restart 1
+   ```
+
+   Dopo il riavvio, `Display` dovrebbe riportare `Model:17`, `Width:240`, `Height:320`,
+   `Rotate:0`. Ripetere il riempimento rosso. Con uDisplay le dimensioni vengono ricavate
+   dal descrittore: modificare soltanto `DisplayWidth`/`DisplayHeight` non corregge il file.
+
+Per tornare allo sfondo nero, eseguire `DisplayText [B0z]`. Se la fascia persiste anche con
+questa configurazione, raccogliere l'output di `Display` e `Status 2`, il `display.ini`
+caricato e una foto del difetto prima di cambiare altri parametri. Questa procedura è
+diagnostica e non costituisce una correzione già verificata sul badge.
+
 ### Build custom (necessaria per il display)
 
-1. Clonare Tasmota, creare `tasmota/user_config_override.h` dal file `.sample` e aggiungere:
+1. Clonare Tasmota e selezionare il tag `v15.6.0`, riferimento software di questa guida.
+   Creare `tasmota/user_config_override.h` dal file `.sample` e aggiungere:
 
    ```c
    #define USE_DISPLAY
@@ -305,20 +385,10 @@ esptool.py --chip esp32c3 --port /dev/ttyACM0 write_flash 0x0 tasmota32c3.factor
 
 Se la porta non entra da sola in download mode: tenere premuto il centro della rotella
 **sinistra** (GPIO9), collegare l'USB-C, premere e rilasciare **RST**, attendere ~2 s e rilasciare
-(procedura del README).
-
-### Alternativa legacy (sconsigliata): driver `DisplayModel 12`
-
-Compilando con `#define USE_DISPLAY_ST7789` al posto di `USE_UNIVERSAL_DISPLAY`, il template usa i
-componenti dedicati (`ST7789 CS=6592` su GPIO10, `ST7789 DC=6624` su GPIO4, `SPI MISO=672` su
-GPIO2, niente `Option A3`):
-
-```json
-{"NAME":"WHY2025-EMF2026 Badge (legacy)","GPIO":[608,640,672,1024,6624,1376,736,704,32,33,6592,0,0,0,0,0,0,0,0,0,0,0],"FLAG":0,"BASE":1}
-```
-
-Il driver legacy nasce per pannelli 240×240 e Tasmota lo sta rimuovendo: verificare
-`DisplayWidth`/`DisplayHeight`/`DisplayRotate` e preferire comunque uDisplay.
+(procedura del README). Lasciare rilasciata la rotella **destra** (GPIO8): per entrare nel
+bootloader servono **GPIO9 basso e GPIO8 alto**. Premere entrambi i pulsanti al reset porta
+alla combinazione non valida GPIO8=0/GPIO9=0. Vedi la
+[selezione del boot mode di Espressif](https://docs.espressif.com/projects/esptool/en/latest/esp32c3/advanced-topics/boot-mode-selection.html).
 
 ### Verifiche consigliate
 
@@ -326,5 +396,9 @@ Il driver legacy nasce per pannelli 240×240 e Tasmota lo sta rimuovendo: verifi
   `Option A3`, `SPI DC`, `SPI CS` e non componenti ESP8266 (codici diversi).
 - Prima del display, verificare con `I2CScan` che l'AW9523B risponda a `0x5A`, poi che lo script
   Berry accenda la backlight: senza di essa lo schermo resta nero anche se `DisplayText` funziona.
-- GPIO9 come pulsante è sicuro (stesso schema del firmware ufficiale): Tasmota applica il
-  pull-up sui `Button`, quindi al boot il pin resta alto se non lo si tiene premuto.
+- GPIO9 può essere usato come `Button2`, come nel firmware originale. Il suo livello per lo
+  strapping viene però campionato al reset, **prima dell'esecuzione di Tasmota**: dipende dal
+  pull-up interno presente al reset e dal circuito collegato al pin. Il pull-up configurato
+  da Tasmota riguarda il funzionamento del pulsante durante l'esecuzione dell'applicazione e
+  non garantisce il livello dello strapping. Per il download rispettare anche la condizione
+  su GPIO8 descritta sopra.
