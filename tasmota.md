@@ -68,9 +68,10 @@ Connettori fisici (8): `SPI`, `I2C`, `RGB0`, `RGB1`, `RGB2`, `RGB3`, `RS232`, `P
   pilotabile solo da Berry/LVGL e pesante su un C3 senza PSRAM. Piano B, non piano A.
 - Con il binario stock funzionano comunque: Wi-Fi/MQTT/web UI, i **7 WS2812**, i **due pulsanti**,
   il bus **I2C** (`I2CScan`) e **Berry** (quindi anche backlight/AW9523 via script).
-- Tasmota sta dismettendo i driver display specifici (fra cui l'ST7789 legacy, `DisplayModel 12`)
-  in favore dello **Universal Display Driver** (`DisplayModel 17`, descrittore `display.ini`).
-  La configurazione sotto usa quello.
+- I driver display specifici per TFT SPI (fra cui l'ST7789 legacy, `DisplayModel 12`) **sono
+  stati rimossi** dal sorgente Tasmota (in v15.6.0 non esiste più `xdsp_12_ST7789.ino`): resta
+  solo lo **Universal Display Driver** (`DisplayModel 17`, descrittore `display.ini`). La
+  configurazione sotto usa quello.
 - Console: nelle release attuali `tasmota32c3.bin` usa la **console USB (HWCDC)** sul
   connettore USB-C con fallback su UART0 (GPIO20/21, connettore "RS232") quando l'USB non è
   collegato; la vecchia variante separata `tasmota32c3cdc` non è più pubblicata.
@@ -188,7 +189,7 @@ end
 Codici componente **Tasmota32/ESP32** (pagina *Components*, tabella ESP32 — quelli della tabella
 ESP8266 sono diversi per i componenti display): `I2C SCL1=608`, `I2C SDA1=640`, `SPI MISO1=672`,
 `SPI MOSI1=704`, `SPI CLK1=736`, `SPI CS1=768`, `SPI DC1=800`, `Display Rst=1024`, `WS2812=1376`,
-`Button1=32`, `Button2=33`, `Option A3=6210` (legacy: `ST7789 CS=6592`, `ST7789 DC=6624`).
+`Button1=32`, `Button2=33`, `Option A3=6210`.
 
 Per ESP32-C3 l'array `GPIO` del template ha **22 elementi**, indice = numero GPIO (0…21);
 gli indici 11–17 (flash) restano a 0 (stesso schema del template ufficiale "SuperMini ESP32-C3").
@@ -248,18 +249,19 @@ B6,4,0A,82,27,00
 :A,2A,2B,2C
 :R,36
 :0,C0,00,00,00
-:1,60,00,00,01
+:1,A0,00,00,01
 :2,00,00,00,02
-:3,A0,00,00,03
+:3,60,00,00,03
 :i,20,21
 #
 ```
 
 Gli `*` nella riga `:H` prendono i pin dal template (`SPI CS`, `SPI CLK`, `SPI MOSI`, `SPI DC`,
 `Backlight` → non assegnato, `Display Rst`, `SPI MISO` → non assegnato). `40` = 40 MHz: se
-l'immagine è corrotta provare `20`. Le righe `:0..:3` sono le 4 rotazioni (`DisplayRotate 0..3`),
-con `:0` uguale all'orientamento del firmware ufficiale; se rosso e blu risultano scambiati
-aggiungere `0x08` (BGR) ai quattro valori MADCTL.
+l'immagine è corrotta provare `20`. Le righe `:0..:3` sono le 4 rotazioni di `DisplayRotate 0..3`
+(0°, 90° orario, 180°, 270°: la stessa tabella `C0/A0/00/60` del driver Adafruit per ST7789
+240×320), con `:0` uguale all'orientamento del firmware ufficiale; se rosso e blu risultano
+scambiati aggiungere `0x08` (BGR) ai quattro valori MADCTL.
 
 ### Risoluzione e orientamento
 
@@ -271,14 +273,15 @@ controller, quindi i valori senza `MV` (`C0`, `00`) sono portrait 240×320 e que
 - **portrait nativo** (quella sopra): `:H,ST7789,240,320,…` e `:0,C0,…`; per lavorare in
   orizzontale basta `DisplayRotate 1` o `3`: uDisplay passa da solo a 320×240 e usa il MADCTL
   di `:1`/`:3`;
-- **landscape nativo**: `:H,ST7789,320,240,…` con `:0,60,00,00,00` (oppure `A0` se risulta
-  capovolto) e le altre tre righe ruotate di conseguenza (`:1,C0`, `:2,A0`, `:3,00`).
+- **landscape nativo**: `:H,ST7789,320,240,…` con `:0,A0,00,00,00` (oppure `60` se risulta
+  capovolto) e le altre tre righe ruotate di conseguenza (`:1,00`, `:2,60`, `:3,C0`).
 
 Sintomo tipico di incoerenza (segnalato su questo badge dopo un cambio di risoluzione): la
 parte **destra** dello schermo resta vuota e non si aggiorna. Succede portando `:H` a `320,240`
 e lasciando `:0,C0`: il controller è ancora in modalità 240 colonne e scarta tutto ciò che cade
 oltre la colonna 239. Correggere il MADCTL (o tornare a `240,320` + `DisplayRotate`), poi
-`Restart 1`.
+`Restart 1`; il comando `Display` (senza parametri) riporta `Model`, `Width`, `Height` e `Rotate`
+effettivi, utile per confermare che cosa ha caricato uDisplay.
 
 Per la dimensione del testo non si tocca la risoluzione: `DisplaySize 1..4` oppure `[sN]` dentro
 `DisplayText`; `DisplayFont` per i font alternativi.
@@ -306,18 +309,29 @@ alimentato, il TSC2007 (`0x48` tipico). `DisplayModel` deve rispondere `17`: se 
 
 Tasmota associa `Button<n>` a `Power<n>`; qui l'unico dispositivo è la Light WS2812, quindi
 **entrambi i pulsanti finiscono a commutare `Power1`** (comportamento osservato sul badge).
-`SetOption73 1` li scollega dai relè e li trasforma in eventi
-(`{"Button1":{"Action":"SINGLE"}}`, azioni `SINGLE`/`DOUBLE`/`TRIPLE`/`QUAD`/`PENTA`/`HOLD`);
-`SetOption1 1` evita che pressioni multiple entrino in WifiConfig/Reset. Esempio di mappatura:
+`SetOption73 1` li scollega dai relè: a ogni pressione Tasmota pubblica su MQTT
+`{"Button<x>":{"Action":"SINGLE"}}` (azioni `SINGLE`/`DOUBLE`/`TRIPLE`/`QUAD`/`PENTA`/`HOLD`) ma
+**il trigger per le regole è `Button<x>#State`** con valori numerici: `10` = singola, `11` =
+doppia, `12` = tripla, `3` = tenuto (doc *Rules*, esempio `ON button1#state=10 DO …`). Un
+trigger `Button<x>#Action=SINGLE` **non scatta**. `SetOption1 1` evita che pressioni multiple
+entrino in WifiConfig/Reset; `SetOption32 10` porta il tempo di "tenuto" da 4 s a 1 s.
 
 ```
-Rule1 ON Button2#Action=SINGLE DO Dimmer + ENDON ON Button1#Action=SINGLE DO Dimmer - ENDON ON Button2#Action=HOLD DO Power TOGGLE ENDON ON Button1#Action=DOUBLE DO Scheme + ENDON
+Backlog SetOption73 1; SetOption1 1; SetOption32 10
+Rule1 ON Button2#State=10 DO Dimmer + ENDON ON Button1#State=10 DO Dimmer - ENDON ON Button2#State=3 DO Power TOGGLE ENDON ON Button1#State=11 DO Scheme + ENDON
 Rule1 1
 ```
 
-UP = più luce, DOWN = meno luce, UP tenuto = LED on/off, DOWN doppio = animazione successiva. Con
-`SetOption73 1` i pulsanti non toccano più `Power` da soli, quindi l'on/off deve passare dalla
-regola (o da Berry: `tasmota.add_rule("Button2#Action=HOLD", def () … end)`).
+UP = più luce, DOWN = meno luce, UP tenuto = LED on/off, DOWN doppio = animazione successiva. La
+pressione singola viene riportata con circa mezzo secondo di ritardo (Tasmota attende
+un'eventuale seconda pressione). Con `SetOption73 1` i pulsanti non toccano più `Power` da soli,
+quindi l'on/off deve passare dalla regola (o da Berry:
+`tasmota.add_rule("Button2#State=3", def () tasmota.cmd("Power TOGGLE") end)`).
+
+Diagnosi se non succede nulla: `Rule1` (senza parametri) deve rispondere con la regola e
+`"State":"ON"` — se risponde "Unknown command" la build non include `USE_RULES` e resta la via
+Berry; `SetOption73` deve rispondere `ON`; premendo un tasto in console deve comparire
+`{"Button2":{"Action":"SINGLE"}}`.
 
 `autoexec.be` minimo:
 
@@ -372,18 +386,12 @@ Aggiornamenti successivi: **OTA dal web UI** (*Firmware Upgrade → Upload file*
 `firmware.bin`), senza cavo e conservando template, Wi-Fi e filesystem (`display.ini`, script
 Berry).
 
-### Alternativa legacy (sconsigliata): driver `DisplayModel 12`
+### Driver legacy `DisplayModel 12`: non più disponibile
 
-Compilando con `#define USE_DISPLAY_ST7789` al posto di `USE_UNIVERSAL_DISPLAY`, il template usa i
-componenti dedicati (`ST7789 CS=6592` su GPIO10, `ST7789 DC=6624` su GPIO4, `SPI MISO=672` su
-GPIO2, niente `Option A3`):
-
-```json
-{"NAME":"WHY2025-EMF2026 Badge (legacy)","GPIO":[608,640,672,1024,6624,1376,736,704,32,33,6592,0,0,0,0,0,0,0,0,0,0,0],"FLAG":0,"BASE":1}
-```
-
-Il driver legacy nasce per pannelli 240×240 e Tasmota lo sta rimuovendo: verificare
-`DisplayWidth`/`DisplayHeight`/`DisplayRotate` e preferire comunque uDisplay.
+In Tasmota v15.6.0 i driver display specifici per TFT SPI (`xdsp_12_ST7789`, `xdsp_04_ili9341`,
+…) **non esistono più** nel sorgente: `#define USE_DISPLAY_ST7789` non abilita nulla e i
+componenti `ST7789 CS/DC` del template restano senza driver. L'unica strada è lo Universal
+Display Driver descritto sopra.
 
 ### Verifiche consigliate
 
@@ -391,5 +399,7 @@ Il driver legacy nasce per pannelli 240×240 e Tasmota lo sta rimuovendo: verifi
   `Option A3`, `SPI DC`, `SPI CS` e non componenti ESP8266 (codici diversi).
 - Prima del display, verificare con `I2CScan` che l'AW9523B risponda a `0x5A`, poi che lo script
   Berry accenda la backlight: senza di essa lo schermo resta nero anche se `DisplayText` funziona.
-- GPIO9 come pulsante è sicuro (stesso schema del firmware ufficiale): Tasmota applica il
-  pull-up sui `Button`, quindi al boot il pin resta alto se non lo si tiene premuto.
+- GPIO9 come pulsante è sicuro (stesso schema del firmware ufficiale). Lo strapping viene
+  campionato al reset, prima che Tasmota parta: il livello alto lo garantisce l'hardware del
+  badge, non il pull-up software del componente `Button`. Per il download mode servono GPIO9
+  basso **e GPIO8 alto**: tenere premuta solo la rotella sinistra, non entrambe.
