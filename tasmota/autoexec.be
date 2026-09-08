@@ -1,5 +1,9 @@
 # autoexec.be - WHY2025 badge boot info
 
+# Retroilluminazione via AW9523B: va programmata a ogni avvio. Dopo un
+# semplice Restart il chip conserva i registri, dopo uno spegnimento no.
+load("aw9523_backlight.be")
+
 def version_string()
   var v = tasmota.version()
   return format("%d.%d.%d.%d",
