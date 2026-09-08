@@ -1,27 +1,38 @@
 # Tasmota su WHY2025 / EMF2026 Badge
 
-Questo documento descrive come far girare **Tasmota** (in alternativa al firmware ESP-IDF/LVGL
+Questa guida descrive come far girare **Tasmota** (in alternativa al firmware ESP-IDF/LVGL
 ufficiale di questo repo) sul badge WHY2025 / EMF2026, riusando tutto l'hardware presente sul
 PCB. Le informazioni sui GPIO e sui registri sono estratte dal firmware ufficiale
 (`main/badge/led.c`, `main/badge/led.h`, `main/badge/ui.h`, `sdkconfig.emf2026-badge`,
-`components/lvgl_esp32_drivers/lvgl_tft/st7789.c`) e dal `README.md`; i codici componente e il
-comportamento di Tasmota dalla documentazione ufficiale (pagine *Components*, *Displays*,
-*Universal Display Driver*, *Berry*, *BUILDS*) e dai binari pubblicati su `ota.tasmota.com`.
+`components/lvgl_esp32_drivers/lvgl_tft/st7789.c`) e dal `README.md` del repo; i codici
+componente e il comportamento di Tasmota dalla documentazione ufficiale (pagine *Components*,
+*Displays*, *Universal Display Driver*, *Berry*, *BUILDS*, *I2CDEVICES*) e dai binari pubblicati
+su `ota.tasmota.com`.
 
 **Stato (settembre 2026): verificato sul badge.** Con una build TasmoCompiler (vedi *Build custom*)
-funzionano LED WS2812, pulsanti con le regole di *Pulsanti*, display via Universal Display Driver
-e retroilluminazione via Berry/AW9523B; il `display.ini` verificato è in
-[`tasmota/display.ini`](tasmota/display.ini). Non ancora provati: TSC2007 e connettori `RGB*`.
-Consigliato `I2CDriver32 0` contro il driver MLX90614 che interroga `0x5A` (vedi *Cosa non è
-supportato*).
+funzionano LED WS2812, pulsanti con le regole di *Pulsanti*, display via Universal Display Driver,
+retroilluminazione via Berry/AW9523B e la schermata di boot. Non ancora provati: TSC2007 e
+connettori `RGB*`.
 
 > **Attenzione concettuale**: questa è una board custom da conferenza (MCU ESP32-C3 + display +
 > LED + I2C expander), non un dispositivo "smart plug/switch" tipico di Tasmota. Flashare Tasmota
 > **sostituisce interamente** il firmware ufficiale: radar BLE, giochi (Snake, Space Invaders),
 > sync schedule via Wi-Fi, animazioni rainbow, web UI del badge, ecc. andranno persi.
 > Per tornare al firmware originale: `pio run -e emf2026-badge -t upload` seguito da
-> `pio run -e emf2026-badge -t uploadfs` (procedura del README, riscrive bootloader, tabella
-> partizioni e filesystem).
+> `pio run -e emf2026-badge -t uploadfs` (procedura del README del repo, riscrive bootloader,
+> tabella partizioni e filesystem).
+
+## File in questa cartella
+
+| File | Dove va | Cosa fa |
+|---|---|---|
+| [`display.ini`](display.ini) | filesystem del badge | descrittore uDisplay dell'ST7789 (320×240, init identica al firmware LVGL); **verificato** |
+| [`autoexec.be`](autoexec.be) | filesystem del badge | eseguito a ogni boot: carica `aw9523_backlight.be` e, all'arrivo della rete, disegna una schermata con IP, SSID, MAC, versione e heap libero; **verificato** |
+| [`aw9523_backlight.be`](aw9523_backlight.be) | filesystem del badge | programma l'AW9523B come `led_init()` del firmware, accende la backlight e aggiunge il comando `AwBacklight 0..255`; **verificato** |
+| `README.md` | — | questa guida |
+
+I file si caricano da *Consoles → Manage File system* del web UI di Tasmota. Sopravvivono agli
+aggiornamenti OTA e a `Reset 1`; spariscono solo con un flash completo (`--erase-all`).
 
 ## Hardware e mappa GPIO (ESP32-C3)
 
@@ -47,7 +58,7 @@ Display: **ST7789V**, 2.8", pannello 240×320 ma **pilotato dal firmware come 32
 (`CONFIG_LV_DISPLAY_ORIENTATION=0`, chiamato `PORTRAIT` nel driver → `{0xC0,0x00,0x60,0xA0}[0]`
 in `st7789.c`), 16 bit/pixel (`COLMOD 0x55`), **senza inversione colori** (`CONFIG_LV_INVERT_COLORS`
 non impostato → `INVOFF`). Quindi la rotazione 0 di Tasmota è un raster **320 di larghezza ×
-240 di altezza** con MADCTL `C0`: è ciò che fissa la riga `:H` del `display.ini` più sotto.
+240 di altezza** con MADCTL `C0`: è ciò che fissa la riga `:H` di `display.ini`.
 
 Backlight: **non è su un GPIO** dell'ESP32-C3 (`CONFIG_LV_ENABLE_BACKLIGHT_CONTROL` non
 impostato). È pilotata dai 4 pin `P1_0..P1_3` dell'AW9523B in modalità LED a corrente costante,
@@ -97,7 +108,7 @@ Connettori fisici (8): `SPI`, `I2C`, `RGB0`, `RGB1`, `RGB2`, `RGB3`, `RS232`, `P
   standard (`Backlight`, `Dimmer` del display, `Power` su expander…). Alla partenza il chip resta
   nello stato di reset (tutti i pin in modalità GPIO, non LED): finché uno script non lo
   programma via I2C la retroilluminazione non è sotto controllo → il display può risultare
-  **buio anche se Tasmota lo sta pilotando correttamente**.
+  **buio anche se Tasmota lo sta pilotando correttamente**. Lo risolve `aw9523_backlight.be`.
 - **TSC2007** (touch resistivo I2C): nessun driver. Il touch universale di Tasmota (uTouch)
   supporta XPT2046 (SPI), FT5206/FT6336, GT911, CST816S (I2C), non il TSC2007. Il firmware
   ufficiale del badge non lo usa nemmeno lui.
@@ -123,7 +134,8 @@ da `autoexec.be`.
 
 ### Backlight e connettori RGB* via AW9523B
 
-Registri rilevanti dell'AW9523B (stessi valori scritti da `led_init()` in `led.c`):
+Registri rilevanti dell'AW9523B (stessi valori scritti da `led_init()` in `led.c`, e da
+[`aw9523_backlight.be`](aw9523_backlight.be)):
 
 | Registro | Significato | Valore del firmware | Nota |
 |---|---|---|---|
@@ -135,40 +147,10 @@ Registri rilevanti dell'AW9523B (stessi valori scritti da `led_init()` in `led.c
 | `0x2C..0x2F` | DIM P1_4..P1_7 → `RGB2` (pin 4), `RGB3` | | |
 
 Senza le scritture su `0x12`/`0x13` i registri DIM non hanno alcun effetto (pin in modalità
-GPIO). Script **non testato sull'hardware**, ma allineato riga per riga a `led.c`:
-
-```berry
-# aw9523_backlight.be — backlight display via AW9523B (0x5A), stessi registri di main/badge/led.c
-class AW9523_Backlight
-  var wire, addr
-  def init(addr)
-    self.addr = addr
-    self.wire = tasmota.wire_scan(addr)      # cerca il chip sui bus I2C configurati
-    if self.wire == nil
-      print(format("AW9523: chip 0x%02X non trovato", addr))
-      return
-    end
-    self.wire.write(addr, 0x11, 0x01, 1)     # GCR (limite di corrente), come led_init()
-    self.wire.write(addr, 0x12, 0x80, 1)     # P0_0..P0_6 in LED mode
-    self.wire.write(addr, 0x13, 0x80, 1)     # P1_0..P1_6 in LED mode -> abilita i 4 pin backlight
-  end
-  def set(level)                             # 0..255, equivale a set_screen_led_backlight()
-    if self.wire == nil return end
-    for reg: [0x20, 0x21, 0x22, 0x23]        # DIM di P1_0..P1_3
-      self.wire.write(self.addr, reg, level, 1)
-    end
-  end
-end
-
-var bl = AW9523_Backlight(0x5A)
-bl.set(180)
-
-# comando console/MQTT: AwBacklight 0..255
-tasmota.add_cmd('AwBacklight', def (cmd, idx, payload)
-  bl.set(int(payload))
-  tasmota.resp_cmnd_done()
-end)
-```
+GPIO). Lo script fa esattamente questo: `wire_scan(0x5A)`, le tre scritture di `led_init()`, poi
+`0x20..0x23` = 180; il comando `AwBacklight 0..255` (console o MQTT) cambia il livello. Dopo un
+semplice `Restart` il chip conserva i registri; dopo uno spegnimento completo no, per questo
+`autoexec.be` lo carica a ogni boot.
 
 Per i connettori `RGB*` si usano i registri DIM `0x24..0x2F`, ma **solo i pin in modalità LED
 rispondono al DIM**. I valori `0x80` dello script riproducono `led_init()` e bastano per la
@@ -182,7 +164,7 @@ backlight, ma lasciano due canali dei connettori in modalità GPIO:
 Per usare **tutti i 16 pin come uscite LED** (4 backlight + 12 connettori) sostituire le due
 scritture su `0x12`/`0x13` in `init()` con `0x00`. Se alcuni pin servono come GPIO, mantenere a 1
 i rispettivi bit in `0x12`/`0x13` e usare i registri `0x02`/`0x03` (output) e `0x04`/`0x05`
-(direzione). (Integrato dalla PR #1.)
+(direzione).
 
 ### Touch TSC2007
 
@@ -226,60 +208,22 @@ occupati; GPIO2 (MISO) è il candidato naturale perché uDisplay scrive soltanto
 non usa MISO. Alternativa, se si vuole tenere `SPI MISO` (672) su GPIO2: `Option A3` su GPIO18
 (pin USB, anch'esso virtuale).
 
-### `display.ini` (da caricare nel filesystem: *Consoles → Manage File system*)
+### `display.ini`
 
-**Verificato sul badge.** Copia pronta nel repo: [`tasmota/display.ini`](tasmota/display.ini).
-Descrittore uDisplay ricavato dalla sequenza di init di `st7789.c` del firmware ufficiale
-(stessi comandi e parametri; `36,1,C0` = orientamento del badge; `20,0` = `INVOFF`); la riga `:H`
-dichiara **320×240**, le dimensioni LVGL del firmware. Formato `:I`: `comando, numero argomenti
-(hex), argomenti…`; il nibble alto del contatore aggiunge una pausa (`8x` = 150 ms).
+Il file [`display.ini`](display.ini) è il descrittore uDisplay ricavato dalla sequenza di init di
+`st7789.c` del firmware ufficiale (stessi comandi e parametri; `36,1,C0` = orientamento del
+badge; `20,0` = `INVOFF`). Struttura:
 
-```ini
-:H,ST7789,320,240,16,SPI,1,*,*,*,*,*,*,*,40
-:S,2,1,1,0,40,20
-:I
-CF,3,00,83,30
-ED,4,64,03,12,81
-E8,3,85,01,79
-CB,5,39,2C,00,34,02
-F7,1,20
-EA,2,00,00
-C0,1,26
-C1,1,11
-C5,2,35,3E
-C7,1,BE
-36,1,C0
-3A,1,55
-20,0
-B1,2,00,1B
-F2,1,08
-26,1,01
-E0,0E,D0,00,02,07,0A,28,32,44,42,06,0E,12,14,17
-E1,0E,D0,00,02,07,0A,28,31,54,47,0E,1C,17,1B,1E
-2A,4,00,00,00,EF
-2B,4,00,00,01,3F
-B7,1,07
-B6,4,0A,82,27,00
-11,80
-29,80
-:o,28
-:O,29
-:A,2A,2B,2C
-:R,36
-:0,C0,00,00,00
-:1,A0,00,00,01
-:2,00,00,00,02
-:3,60,00,00,03
-:i,20,21
-#
-```
-
-Gli `*` nella riga `:H` prendono i pin dal template (`SPI CS`, `SPI CLK`, `SPI MOSI`, `SPI DC`,
-`Backlight` → non assegnato, `Display Rst`, `SPI MISO` → non assegnato). `40` = 40 MHz: se
-l'immagine è corrotta provare `20`. Le righe `:0..:3` sono le 4 rotazioni di `DisplayRotate 0..3`
-(0°, 90° orario, 180°, 270°, tabella `C0/A0/00/60`): `:0` è l'orientamento del firmware
-(320×240), `:1`/`:3` danno 240×320; se rosso e blu risultano scambiati aggiungere `0x08` (BGR)
-ai quattro valori MADCTL.
+- `:H,ST7789,320,240,16,SPI,1,*,*,*,*,*,*,*,40`: nome, **320×240** (le dimensioni LVGL del
+  firmware), 16 bit/pixel, SPI hardware 1, pin presi dal template (`*` = `SPI CS`, `SPI CLK`,
+  `SPI MOSI`, `SPI DC`, `Backlight` → non assegnato, `Display Rst`, `SPI MISO` → non
+  assegnato), 40 MHz (se l'immagine è corrotta provare `20`);
+- `:I` … : sequenza di init, formato `comando, numero argomenti (hex), argomenti…`; il nibble
+  alto del contatore aggiunge una pausa (`8x` = 150 ms);
+- `:0..:3`: MADCTL delle 4 rotazioni di `DisplayRotate 0..3` (0°, 90° orario, 180°, 270°,
+  tabella `C0/A0/00/60`): `:0` è l'orientamento del firmware (320×240), `:1`/`:3` danno
+  240×320; se rosso e blu risultano scambiati aggiungere `0x08` (BGR) ai quattro valori;
+- `:i,20,21`: opcode di inversione off/on per `DisplayInvert`.
 
 ### Risoluzione e orientamento
 
@@ -313,14 +257,20 @@ Per la dimensione del testo non si tocca la risoluzione: `DisplaySize 1..4` oppu
 
 ### Comandi di setup (console)
 
+Inserire i comandi **uno per riga** nella console e leggere la risposta di ciascuno: il campo di
+input è a riga singola, un blocco incollato su più righe viene fuso in una sola.
+
 ```
 Backlog Template {"NAME":"WHY2025-EMF2026 Badge","GPIO":[608,640,6210,1024,800,1376,736,704,32,33,768,0,0,0,0,0,0,0,0,0,0,0],"FLAG":0,"BASE":1}; Module 0
 ```
 
-Dopo il riavvio, caricare `display.ini` (e gli script Berry + `autoexec.be`) nel filesystem, poi:
+Dopo il riavvio, caricare nel filesystem i tre file di questa cartella (`display.ini`,
+`aw9523_backlight.be`, `autoexec.be`), poi:
 
 ```
 Backlog DisplayModel 17; DisplayMode 0; DisplayRotate 0; Pixels 7; SetOption73 1; SetOption1 1; SetOption32 10; I2CDriver32 0
+Rule1 ON Button2#State=10 DO Dimmer + ENDON ON Button1#State=10 DO Dimmer - ENDON ON Button2#State=3 DO Power TOGGLE ENDON ON Button1#State=11 DO Scheme + ENDON
+Rule1 1
 Restart 1
 DisplayText [z][x20y20s2]Ciao dal badge
 I2CScan
@@ -341,27 +291,18 @@ doppia, `12` = tripla, `3` = tenuto (doc *Rules*, esempio `ON button1#state=10 D
 trigger `Button<x>#Action=SINGLE` **non scatta**. `SetOption1 1` evita che pressioni multiple
 entrino in WifiConfig/Reset; `SetOption32 10` porta il tempo di "tenuto" da 4 s a 1 s.
 
-```
-Backlog SetOption73 1; SetOption1 1; SetOption32 10
-Rule1 ON Button2#State=10 DO Dimmer + ENDON ON Button1#State=10 DO Dimmer - ENDON ON Button2#State=3 DO Power TOGGLE ENDON ON Button1#State=11 DO Scheme + ENDON
-Rule1 1
-```
+La `Rule1` dei comandi di setup (**verificata sul badge**) fa: UP = più luce, DOWN = meno luce,
+UP tenuto = LED on/off, DOWN doppio = animazione successiva. La pressione singola viene riportata
+con circa mezzo secondo di ritardo (Tasmota attende un'eventuale seconda pressione). Con
+`SetOption73 1` i pulsanti non toccano più `Power` da soli, quindi l'on/off deve passare dalla
+regola.
 
-**Verificato sul badge.** UP = più luce, DOWN = meno luce, UP tenuto = LED on/off, DOWN doppio =
-animazione successiva. La pressione singola viene riportata con circa mezzo secondo di ritardo
-(Tasmota attende
-un'eventuale seconda pressione). Con `SetOption73 1` i pulsanti non toccano più `Power` da soli,
-quindi l'on/off deve passare dalla regola (o da Berry:
-`tasmota.add_rule("Button2#State=3", def () tasmota.cmd("Power TOGGLE") end)`).
-
-**Inserire i comandi uno per riga** nella console e leggere la risposta di ciascuno: il campo
-di input è a riga singola, un blocco incollato su più righe viene fuso in una sola (il `Backlog`
-viene eseguito e la riga `Rule1 ON …` va persa). Dopo `Rule1 ON …` Tasmota deve rispondere con
-`"Length"` > 0 e il testo in `"Rules"`; se risponde `"Length":0,"Rules":""` (caso osservato sul
-badge) la regola non è stata ricevuta: reinviare la riga da sola. Poi `Rule1 1` → `"State":"ON"`.
-Altri controlli: `SetOption73` deve rispondere `ON`; premendo un tasto in console deve comparire
-`{"Button2":{"Action":"SINGLE"}}`; se `Rule1` risponde "Unknown command" la build non include
-`USE_RULES`. Alternativa senza regole, in `autoexec.be` (Berry c'è sempre):
+Controlli: dopo `Rule1 ON …` Tasmota deve rispondere con `"Length"` > 0 e il testo in `"Rules"`;
+se risponde `"Length":0,"Rules":""` la riga non è stata ricevuta (tipico quando si incolla un
+blocco di più righe): reinviarla da sola. Poi `Rule1 1` → `"State":"ON"`. `SetOption73` deve
+rispondere `ON`; premendo un tasto in console deve comparire `{"Button2":{"Action":"SINGLE"}}`.
+Se `Rule1` risponde "Unknown command" la build non include `USE_RULES`: stessa mappatura da
+Berry, ad esempio in coda a `autoexec.be`:
 
 ```berry
 tasmota.add_rule("Button2#State=10", def () tasmota.cmd("Dimmer +") end)
@@ -370,11 +311,30 @@ tasmota.add_rule("Button2#State=3", def () tasmota.cmd("Power TOGGLE") end)
 tasmota.add_rule("Button1#State=11", def () tasmota.cmd("Scheme +") end)
 ```
 
-`autoexec.be` minimo:
+### Riepilogo di tutte le impostazioni applicate
 
-```berry
-load("aw9523_backlight.be")
-```
+Tutto ciò che è stato impostato per arrivare alla configurazione verificata, con il motivo. Le
+voci "console" sono salvate nelle impostazioni Tasmota in flash (persistono al riavvio e all'OTA;
+`Reset 1` le azzera), i file stanno nel filesystem.
+
+| Dove | Impostazione | Cosa fa | Perché |
+|---|---|---|---|
+| build | `USE_DISPLAY`, `USE_UNIVERSAL_DISPLAY`, (`USE_DISPLAY_MODES1TO5`) | compila il driver display universale (e i DisplayMode 1–5) | il binario stock per C3 non ha alcun driver display |
+| console | `Template {…}` + `Module 0` | assegna i componenti ai GPIO e attiva il template | mappa hardware del badge (I2C, SPI, WS2812, pulsanti) |
+| template | `Option A3` su GPIO2 | marcatore virtuale che avvia uDisplay | richiesto da uDisplay; GPIO2/MISO non serve al display |
+| filesystem | `display.ini` | descrittore ST7789 320×240 con l'init del firmware | il pannello va indirizzato come 320×240 con MADCTL `C0` |
+| console | `DisplayModel 17` | seleziona lo Universal Display Driver | unico driver TFT rimasto in Tasmota |
+| console | `DisplayMode 0` | schermo pilotato solo da `DisplayText`/script | niente layout automatici sopra la schermata di boot |
+| console | `DisplayRotate 0` | orientamento del firmware ufficiale | |
+| console | `Pixels 7` | i 7 WS2812 diventano una Light (`Color`, `Dimmer`, `Scheme`) | |
+| console | `SetOption73 1` | pulsanti scollegati da `Power`, eventi `Button<x>#State` | entrambi commutavano `Power1` |
+| console | `SetOption1 1` | niente WifiConfig/Reset da pressioni multiple | evitare reset accidentali dalle rotelle |
+| console | `SetOption32 10` | pressione "tenuta" = 1 s (default 4 s) | uso pratico dell'hold |
+| console | `I2CDriver32 0` | disabilita il driver MLX90614 | interrogava l'AW9523B a `0x5A` (`mlx checksum error`) |
+| console | `Rule1 ON …` + `Rule1 1` | UP/DOWN → `Dimmer +/-`, UP tenuto → `Power TOGGLE`, DOWN doppio → `Scheme +` | mappatura dei pulsanti sui LED |
+| filesystem | `aw9523_backlight.be` | init AW9523B come `led_init()`, backlight a 180, comando `AwBacklight` | la backlight non è su un GPIO |
+| filesystem | `autoexec.be` | `load("aw9523_backlight.be")` + schermata di boot alla connessione | eseguito a ogni avvio; l'AW9523B perde i registri allo spegnimento |
+| flash | `firmware.factory.bin` con esptool a `0x0`; poi OTA con `firmware.bin` | primo flash e aggiornamenti | il web flasher da browser ha dato boot loop |
 
 ### Build custom (necessaria per il display)
 
@@ -436,6 +396,8 @@ Display Driver descritto sopra.
   `Option A3`, `SPI DC`, `SPI CS` e non componenti ESP8266 (codici diversi).
 - Prima del display, verificare con `I2CScan` che l'AW9523B risponda a `0x5A`, poi che lo script
   Berry accenda la backlight: senza di essa lo schermo resta nero anche se `DisplayText` funziona.
+  Se al boot la console dice `AW9523: chip 0x5A non trovato`, l'I2C non era pronto quando è
+  partito `autoexec.be`: rimandare il `load` con `tasmota.set_timer(1000, def () load("aw9523_backlight.be") end)`.
 - GPIO9 come pulsante è sicuro (stesso schema del firmware ufficiale). Lo strapping viene
   campionato al reset, prima che Tasmota parta: il livello alto lo garantisce l'hardware del
   badge, non il pull-up software del componente `Button`. Per il download mode servono GPIO9
