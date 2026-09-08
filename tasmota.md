@@ -9,9 +9,9 @@ comportamento di Tasmota dalla documentazione ufficiale (pagine *Components*, *D
 *Universal Display Driver*, *Berry*, *BUILDS*) e dai binari pubblicati su `ota.tasmota.com`.
 
 **Stato (settembre 2026): verificato sul badge.** Con una build TasmoCompiler (vedi *Build custom*)
-funzionano LED WS2812, pulsanti, display via Universal Display Driver e retroilluminazione via
-Berry/AW9523B; il `display.ini` verificato è in [`tasmota/display.ini`](tasmota/display.ini).
-Non ancora provati: TSC2007, connettori `RGB*`, regole per i pulsanti (vedi *Pulsanti*).
+funzionano LED WS2812, pulsanti con le regole di *Pulsanti*, display via Universal Display Driver
+e retroilluminazione via Berry/AW9523B; il `display.ini` verificato è in
+[`tasmota/display.ini`](tasmota/display.ini). Non ancora provati: TSC2007 e connettori `RGB*`.
 
 > **Attenzione concettuale**: questa è una board custom da conferenza (MCU ESP32-C3 + display +
 > LED + I2C expander), non un dispositivo "smart plug/switch" tipico di Tasmota. Flashare Tasmota
@@ -343,8 +343,9 @@ Rule1 ON Button2#State=10 DO Dimmer + ENDON ON Button1#State=10 DO Dimmer - ENDO
 Rule1 1
 ```
 
-UP = più luce, DOWN = meno luce, UP tenuto = LED on/off, DOWN doppio = animazione successiva. La
-pressione singola viene riportata con circa mezzo secondo di ritardo (Tasmota attende
+**Verificato sul badge.** UP = più luce, DOWN = meno luce, UP tenuto = LED on/off, DOWN doppio =
+animazione successiva. La pressione singola viene riportata con circa mezzo secondo di ritardo
+(Tasmota attende
 un'eventuale seconda pressione). Con `SetOption73 1` i pulsanti non toccano più `Power` da soli,
 quindi l'on/off deve passare dalla regola (o da Berry:
 `tasmota.add_rule("Button2#State=3", def () tasmota.cmd("Power TOGGLE") end)`).
