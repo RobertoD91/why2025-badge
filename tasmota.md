@@ -10,7 +10,8 @@ comportamento di Tasmota dalla documentazione ufficiale (pagine *Components*, *D
 
 **Stato (settembre 2026): verificato sul badge.** Con una build TasmoCompiler (vedi *Build custom*)
 funzionano LED WS2812, pulsanti, display via Universal Display Driver e retroilluminazione via
-Berry/AW9523B. Non ancora provati: TSC2007 e connettori `RGB*`.
+Berry/AW9523B; il `display.ini` verificato è in [`tasmota/display.ini`](tasmota/display.ini).
+Non ancora provati: TSC2007, connettori `RGB*`, regole per i pulsanti (vedi *Pulsanti*).
 
 > **Attenzione concettuale**: questa è una board custom da conferenza (MCU ESP32-C3 + display +
 > LED + I2C expander), non un dispositivo "smart plug/switch" tipico di Tasmota. Flashare Tasmota
@@ -32,17 +33,19 @@ Berry/AW9523B. Non ancora provati: TSC2007 e connettori `RGB*`.
 | 5 | **WS2812** data-in | interno (7 LED frontali) | il DOUT dell'ultimo LED esce sul pin 4 ("1W") del connettore "I2C" |
 | 6 | SPI **CLK** | "SPI" pin 5 | ST7789, SPI hardware |
 | 7 | SPI **MOSI** | "SPI" pin 2 | ST7789 |
-| 8 | **Button1** = DOWN (rotella destra / pressione centrale destra) | "RS232" pin 4 o 5 | `ui.h`: `BUTTON_1 0x08 // DOWN`; attivo basso, pull-up interno. Il README chiama i due segnali "button A/B" ma non dice quale sia quale |
-| 9 | **Button2** = UP (rotella sinistra / pressione centrale sinistra) | "RS232" pin 4 o 5 | `ui.h`: `BUTTON_2 0x09 // UP`. ⚠️ **strapping boot-mode** ESP32-C3: tenuto premuto al reset → Joint Download Boot (è la procedura di recovery del README) |
+| 8 | **Button1** = DOWN (rotella destra / pressione centrale destra) | "RS232" pin 4 o 5 | `ui.h`: `BUTTON_1 0x08 // DOWN`; attivo basso, pull-up interno. **Strapping**: per il download mode deve restare alto (pulsante rilasciato). Il README chiama i due segnali "button A/B" ma non dice quale sia quale |
+| 9 | **Button2** = UP (rotella sinistra / pressione centrale sinistra) | "RS232" pin 4 o 5 | `ui.h`: `BUTTON_2 0x09 // UP`. ⚠️ **strapping boot-mode** ESP32-C3: tenuto premuto al reset, con GPIO8 alto → Joint Download Boot (è la procedura di recovery del README) |
 | 10 | SPI **CS** display | "SPI" pin 3 | `CONFIG_LV_DISP_SPI_CS=10` |
 | 11–17 | non disponibili | — | riservati alla flash SPI integrata nel modulo |
 | 18/19 | USB D-/D+ | USB-C | USB-Serial/JTAG nativo (README) — non usabili come GPIO applicativi |
 | 20/21 | UART0 RX/TX | "RS232" pin 3 (RX) / pin 2 (TX) | console seriale di fallback |
 
-Display: **ST7789V**, 2.8", **240×320**, SPI hardware a 16 bit/pixel (`COLMOD 0x55`). Il firmware
-ufficiale lo usa in **portrait con `MADCTL = 0xC0`** (`CONFIG_LV_DISPLAY_ORIENTATION=0` →
-`{0xC0,0x00,0x60,0xA0}[0]` in `st7789.c`) e **senza inversione colori** (`CONFIG_LV_INVERT_COLORS`
-non impostato → `INVOFF`). Questi due dettagli servono per il `display.ini` più sotto.
+Display: **ST7789V**, 2.8", pannello 240×320 ma **pilotato dal firmware come 320×240**
+(`CONFIG_LV_HOR_RES_MAX=320`, `CONFIG_LV_VER_RES_MAX=240`) con **`MADCTL = 0xC0`**
+(`CONFIG_LV_DISPLAY_ORIENTATION=0`, chiamato `PORTRAIT` nel driver → `{0xC0,0x00,0x60,0xA0}[0]`
+in `st7789.c`), 16 bit/pixel (`COLMOD 0x55`), **senza inversione colori** (`CONFIG_LV_INVERT_COLORS`
+non impostato → `INVOFF`). Quindi la rotazione 0 di Tasmota è un raster **320 di larghezza ×
+240 di altezza** con MADCTL `C0`: è ciò che fissa la riga `:H` del `display.ini` più sotto.
 
 Backlight: **non è su un GPIO** dell'ESP32-C3 (`CONFIG_LV_ENABLE_BACKLIGHT_CONTROL` non
 impostato). È pilotata dai 4 pin `P1_0..P1_3` dell'AW9523B in modalità LED a corrente costante,
@@ -83,7 +86,7 @@ Connettori fisici (8): `SPI`, `I2C`, `RGB0`, `RGB1`, `RGB2`, `RGB3`, `RS232`, `P
 | 7 LED WS2812 frontali | Light (`Pixels`, `Color`, `Scheme`, `Fade`, `Dimmer`) | binario stock | Template: `WS2812` (1376) su GPIO5, poi `Pixels 7` |
 | Button1 / Button2 (DOWN / UP) | `Button` | binario stock | Template: `Button1` (32) su GPIO8, `Button2` (33) su GPIO9. Con un solo dispositivo (la Light WS2812) **entrambi commutano `Power1`**: per distinguerli serve `SetOption73 1` + una regola, vedi *Pulsanti* |
 | Bus I2C | `I2CScan`, accesso da Berry | binario stock | Template: `I2C SCL` (608) su GPIO0, `I2C SDA` (640) su GPIO1 |
-| Display ST7789 240×320 | Universal Display Driver (`DisplayModel 17`) + `display.ini` | **build custom** con `USE_DISPLAY` + `USE_UNIVERSAL_DISPLAY` | Template: `SPI CLK/MOSI/CS/DC` + `Display Rst` + `Option A3`; comandi `DisplayText`, `DisplayRotate`, ecc. |
+| Display ST7789 (320×240 in rotazione 0) | Universal Display Driver (`DisplayModel 17`) + `display.ini` | **build custom** con `USE_DISPLAY` + `USE_UNIVERSAL_DISPLAY` | Template: `SPI CLK/MOSI/CS/DC` + `Display Rst` + `Option A3`; comandi `DisplayText`, `DisplayRotate`, ecc. |
 
 ## Cosa **non** è supportato nativamente
 
@@ -163,9 +166,19 @@ tasmota.add_cmd('AwBacklight', def (cmd, idx, payload)
 end)
 ```
 
-Per i connettori `RGB*` basta scrivere gli altri registri DIM (`0x24..0x2F`) con la stessa
-`wire.write`; se servono come GPIO invece che come LED, impostare a 1 il bit corrispondente in
-`0x12`/`0x13` e usare i registri `0x02`/`0x03` (output) e `0x04`/`0x05` (direzione).
+Per i connettori `RGB*` si usano i registri DIM `0x24..0x2F`, ma **solo i pin in modalità LED
+rispondono al DIM**. I valori `0x80` dello script riproducono `led_init()` e bastano per la
+backlight, ma lasciano due canali dei connettori in modalità GPIO:
+
+| Pin AW9523B | Connettore | Registro DIM | Registro di modalità |
+|---|---|---|---|
+| `P0_7` | `RGB2`, pin 3 | `0x2B` | `0x12`, bit 7 |
+| `P1_7` | `RGB3`, pin 4 | `0x2F` | `0x13`, bit 7 |
+
+Per usare **tutti i 16 pin come uscite LED** (4 backlight + 12 connettori) sostituire le due
+scritture su `0x12`/`0x13` in `init()` con `0x00`. Se alcuni pin servono come GPIO, mantenere a 1
+i rispettivi bit in `0x12`/`0x13` e usare i registri `0x02`/`0x03` (output) e `0x04`/`0x05`
+(direzione). (Integrato dalla PR #1.)
 
 ### Touch TSC2007
 
@@ -211,13 +224,14 @@ non usa MISO. Alternativa, se si vuole tenere `SPI MISO` (672) su GPIO2: `Option
 
 ### `display.ini` (da caricare nel filesystem: *Consoles → Manage File system*)
 
+**Verificato sul badge.** Copia pronta nel repo: [`tasmota/display.ini`](tasmota/display.ini).
 Descrittore uDisplay ricavato dalla sequenza di init di `st7789.c` del firmware ufficiale
-(stessi comandi e parametri; `36,1,C0` = portrait del badge; `20,0` = `INVOFF`). Formato `:I`:
-`comando, numero argomenti (hex), argomenti…`; il nibble alto del contatore aggiunge una pausa
-(`8x` = 150 ms).
+(stessi comandi e parametri; `36,1,C0` = orientamento del badge; `20,0` = `INVOFF`); la riga `:H`
+dichiara **320×240**, le dimensioni LVGL del firmware. Formato `:I`: `comando, numero argomenti
+(hex), argomenti…`; il nibble alto del contatore aggiunge una pausa (`8x` = 150 ms).
 
 ```ini
-:H,ST7789,240,320,16,SPI,1,*,*,*,*,*,*,*,40
+:H,ST7789,320,240,16,SPI,1,*,*,*,*,*,*,*,40
 :S,2,1,1,0,40,20
 :I
 CF,3,00,83,30
@@ -259,29 +273,36 @@ B6,4,0A,82,27,00
 Gli `*` nella riga `:H` prendono i pin dal template (`SPI CS`, `SPI CLK`, `SPI MOSI`, `SPI DC`,
 `Backlight` → non assegnato, `Display Rst`, `SPI MISO` → non assegnato). `40` = 40 MHz: se
 l'immagine è corrotta provare `20`. Le righe `:0..:3` sono le 4 rotazioni di `DisplayRotate 0..3`
-(0°, 90° orario, 180°, 270°: la stessa tabella `C0/A0/00/60` del driver Adafruit per ST7789
-240×320), con `:0` uguale all'orientamento del firmware ufficiale; se rosso e blu risultano
-scambiati aggiungere `0x08` (BGR) ai quattro valori MADCTL.
+(0°, 90° orario, 180°, 270°, tabella `C0/A0/00/60`): `:0` è l'orientamento del firmware
+(320×240), `:1`/`:3` danno 240×320; se rosso e blu risultano scambiati aggiungere `0x08` (BGR)
+ai quattro valori MADCTL.
 
 ### Risoluzione e orientamento
 
-Le dimensioni in `:H` (`240,320`) descrivono il pannello **nella rotazione 0** e devono essere
-coerenti con il MADCTL della riga `:0`: il bit `MV` (`0x20`) scambia righe e colonne del
-controller, quindi i valori senza `MV` (`C0`, `00`) sono portrait 240×320 e quelli con `MV`
-(`60`, `A0`) sono landscape 320×240. Due configurazioni valide:
+Le dimensioni in `:H` descrivono il raster **nella rotazione 0** e devono corrispondere a ciò che
+il pannello indirizza con il MADCTL della riga `:0`. Su questo badge il riferimento è il firmware
+ufficiale: LVGL a **320×240** con `MADCTL 0xC0`. Quindi:
 
-- **portrait nativo** (quella sopra): `:H,ST7789,240,320,…` e `:0,C0,…`; per lavorare in
-  orizzontale basta `DisplayRotate 1` o `3`: uDisplay passa da solo a 320×240 e usa il MADCTL
-  di `:1`/`:3`;
-- **landscape nativo**: `:H,ST7789,320,240,…` con `:0,A0,00,00,00` (oppure `60` se risulta
-  capovolto) e le altre tre righe ruotate di conseguenza (`:1,00`, `:2,60`, `:3,C0`).
+- `:H,ST7789,320,240,…` + `:0,C0,…` = rotazione 0 identica al firmware (**configurazione
+  verificata sul badge**);
+- `DisplayRotate 1` o `3` → uDisplay passa a 240×320 e usa i MADCTL con bit `MV` (`A0`, `60`);
+  `DisplayRotate 2` = 320×240 capovolto (`00`);
+- **sbagliato**: `:H,ST7789,240,320,…` con `C0` (la prima versione di questa guida). uDisplay
+  limita x a 239 mentre il pannello ne indirizza 320: la fascia **destra** dello schermo (80
+  colonne) non viene mai disegnata né aggiornata. È il sintomo osservato sul badge.
 
-Sintomo tipico di incoerenza (segnalato su questo badge dopo un cambio di risoluzione): la
-parte **destra** dello schermo resta vuota e non si aggiorna. Succede portando `:H` a `320,240`
-e lasciando `:0,C0`: il controller è ancora in modalità 240 colonne e scarta tutto ciò che cade
-oltre la colonna 239. Correggere il MADCTL (o tornare a `240,320` + `DisplayRotate`), poi
-`Restart 1`; il comando `Display` (senza parametri) riporta `Model`, `Width`, `Height` e `Rotate`
-effettivi, utile per confermare che cosa ha caricato uDisplay.
+Controlli rapidi dopo ogni modifica al file (serve `Restart 1`):
+
+```
+Display
+DisplayText [B63488z]
+DisplayText [B0z][x10y10s2]Test
+```
+
+`Display` riporta `Model 17`, `Width 320`, `Height 240` e `Rotate` effettivi; `[B63488z]` riempie
+di rosso **tutta** l'area logica (se resta una fascia nera, il file caricato non è questo);
+`[B0z]` torna al nero. Non partire dall'esempio `ST7789_display.ini` di Tasmota: è per pannelli
+240×240 con offset `50` (80 px) nelle rotazioni.
 
 Per la dimensione del testo non si tocca la risoluzione: `DisplaySize 1..4` oppure `[sN]` dentro
 `DisplayText`; `DisplayFont` per i font alternativi.
@@ -328,10 +349,21 @@ un'eventuale seconda pressione). Con `SetOption73 1` i pulsanti non toccano più
 quindi l'on/off deve passare dalla regola (o da Berry:
 `tasmota.add_rule("Button2#State=3", def () tasmota.cmd("Power TOGGLE") end)`).
 
-Diagnosi se non succede nulla: `Rule1` (senza parametri) deve rispondere con la regola e
-`"State":"ON"` — se risponde "Unknown command" la build non include `USE_RULES` e resta la via
-Berry; `SetOption73` deve rispondere `ON`; premendo un tasto in console deve comparire
-`{"Button2":{"Action":"SINGLE"}}`.
+**Inserire i comandi uno per riga** nella console e leggere la risposta di ciascuno: il campo
+di input è a riga singola, un blocco incollato su più righe viene fuso in una sola (il `Backlog`
+viene eseguito e la riga `Rule1 ON …` va persa). Dopo `Rule1 ON …` Tasmota deve rispondere con
+`"Length"` > 0 e il testo in `"Rules"`; se risponde `"Length":0,"Rules":""` (caso osservato sul
+badge) la regola non è stata ricevuta: reinviare la riga da sola. Poi `Rule1 1` → `"State":"ON"`.
+Altri controlli: `SetOption73` deve rispondere `ON`; premendo un tasto in console deve comparire
+`{"Button2":{"Action":"SINGLE"}}`; se `Rule1` risponde "Unknown command" la build non include
+`USE_RULES`. Alternativa senza regole, in `autoexec.be` (Berry c'è sempre):
+
+```berry
+tasmota.add_rule("Button2#State=10", def () tasmota.cmd("Dimmer +") end)
+tasmota.add_rule("Button1#State=10", def () tasmota.cmd("Dimmer -") end)
+tasmota.add_rule("Button2#State=3", def () tasmota.cmd("Power TOGGLE") end)
+tasmota.add_rule("Button1#State=11", def () tasmota.cmd("Scheme +") end)
+```
 
 `autoexec.be` minimo:
 
