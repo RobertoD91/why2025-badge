@@ -12,6 +12,8 @@ comportamento di Tasmota dalla documentazione ufficiale (pagine *Components*, *D
 funzionano LED WS2812, pulsanti con le regole di *Pulsanti*, display via Universal Display Driver
 e retroilluminazione via Berry/AW9523B; il `display.ini` verificato è in
 [`tasmota/display.ini`](tasmota/display.ini). Non ancora provati: TSC2007 e connettori `RGB*`.
+Consigliato `I2CDriver32 0` contro il driver MLX90614 che interroga `0x5A` (vedi *Cosa non è
+supportato*).
 
 > **Attenzione concettuale**: questa è una board custom da conferenza (MCU ESP32-C3 + display +
 > LED + I2C expander), non un dispositivo "smart plug/switch" tipico di Tasmota. Flashare Tasmota
@@ -101,10 +103,12 @@ Connettori fisici (8): `SPI`, `I2C`, `RGB0`, `RGB1`, `RGB2`, `RGB3`, `RS232`, `P
   ufficiale del badge non lo usa nemmeno lui.
 - **Radar/BLE** (ricerca badge vicini), **giochi**, **sync schedule**, **animazioni rainbow**,
   **web UI del badge**: logica applicativa, non replicabile con Tasmota stock.
-- Attenzione: alcuni driver sensore inclusi in `tasmota32` condividono gli indirizzi
-  `0x5A`/`0x5B` (es. CCS811, MLX90614). Se dopo il boot compare un sensore "fantasma" a quegli
-  indirizzi, disabilitare il driver corrispondente con `I2CDriver<n> 0` (indici nella pagina
-  *I2CDEVICES* della documentazione).
+- **Driver I2C "fantasma"** (verificato sul badge RHC22, stesso chip allo stesso indirizzo): il
+  driver MLX90614 (indice 32, indirizzo `0x5A`) scambia l'AW9523B per un termometro a infrarossi
+  e riempie la console di `mlx checksum error`. Disabilitarlo con `I2CDriver32 0` (impostazione
+  persistente). Allo stesso indirizzo rispondono anche i driver CCS811 (indice 24, `0x5A/0x5B`)
+  e MPR121 (indice 23, `0x5A..0x5D`): se la build li include e compaiono, `I2CDriver24 0` /
+  `I2CDriver23 0`. Indici nella pagina *I2CDEVICES* della documentazione.
 
 ## Cosa è raggiungibile tramite **scripting Berry**
 
@@ -316,7 +320,7 @@ Backlog Template {"NAME":"WHY2025-EMF2026 Badge","GPIO":[608,640,6210,1024,800,1
 Dopo il riavvio, caricare `display.ini` (e gli script Berry + `autoexec.be`) nel filesystem, poi:
 
 ```
-Backlog DisplayModel 17; DisplayMode 0; DisplayRotate 0; Pixels 7; SetOption73 1; SetOption1 1
+Backlog DisplayModel 17; DisplayMode 0; DisplayRotate 0; Pixels 7; SetOption73 1; SetOption1 1; SetOption32 10; I2CDriver32 0
 Restart 1
 DisplayText [z][x20y20s2]Ciao dal badge
 I2CScan
